@@ -1,0 +1,56 @@
+services:
+  3lakustinizer-backend:
+    build: .
+    env_file:
+      - .env
+    ports:
+      - "5000:5000"
+    container_name: 3lakustinizer-backend
+    restart: unless-stopped
+    command: node server.js
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - db
+    environment:
+      - NODE_ENV=production
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}
+      
+  db:
+    image: mysql:8.0
+    restart: always
+    container_name: 3lakustinizermysql-db
+    env_file:
+      - .env
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - db_data:/var/lib/mysql
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    restart: always
+    container_name: 3lakustinizer-phpmyadmin
+    env_file:
+      - .env    
+    ports:
+      - "8080:80"
+    environment:
+      - PMA_HOST=${DB_HOST}
+      - PMA_USER=${DB_USER}
+      - PMA_PASSWORD=${DB_PASSWORD}
+    depends_on:
+      - db
+      
+volumes:
+  db_data:

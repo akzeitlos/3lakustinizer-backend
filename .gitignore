@@ -1,0 +1,26 @@
+# node modules
+node_modules/
+
+# logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# dotenv
+.env
+
+# OS-spezifisch
+.DS_Store
+Thumbs.db
+
+# editor/IDE
+.vscode/
+.idea/
+*.swp
+
+# optional: build-artifacts (z.B. bei TypeScript)
+dist/
+build/
+
