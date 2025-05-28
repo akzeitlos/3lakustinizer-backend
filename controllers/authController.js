@@ -7,11 +7,12 @@ import nodemailer from "nodemailer";
 
 const { user, role } = db;
 
-// 🔑 Login
+// 🔑 Login: Authentifiziert Nutzer anhand E-Mail/Username und Passwort
 export const login = async (req, res) => {
   const { emailOrUsername, password } = req.body;
 
   try {
+    // Suche Nutzer anhand E-Mail oder Username, der nicht gelöscht ist
     const existingUser = await user.findOne({
       where: {
         [Op.and]: [
@@ -24,13 +25,15 @@ export const login = async (req, res) => {
           { deleted: false },
         ],
       },
-      include: [role],
+      include: [role], // Rollen mitladen
     });
 
+    // Falls Nutzer nicht gefunden, 401 Unauthorized zurückgeben
     if (!existingUser) {
       return res.status(401).json({ message: "Ungültige Anmeldedaten" });
     }
 
+    // Passwort prüfen (Hashvergleich)
     const isPasswordValid = await bcrypt.compare(
       password,
       existingUser.passwordHash
@@ -39,6 +42,7 @@ export const login = async (req, res) => {
       return res.status(401).json({ message: "Ungültige Anmeldedaten" });
     }
 
+    // JWT Token erzeugen mit Nutzerinfos und Rollen, 2 Stunden gültig
     const token = jwt.sign(
       {
         id: existingUser.id,
@@ -49,6 +53,7 @@ export const login = async (req, res) => {
       { expiresIn: "2h" }
     );
 
+    // Token und Nutzerinfos als Antwort zurückgeben
     res.json({
       token,
       user: {
@@ -66,18 +71,20 @@ export const login = async (req, res) => {
   }
 };
 
-// 🧾 Wer bin ich?
+// 🧾 Wer bin ich?: Liefert das Profil des angemeldeten Nutzers zurück
 export const me = async (req, res) => {
   try {
+    // Suche Nutzer anhand der ID aus dem Auth-Middleware-Token
     const currentUser = await user.findByPk(req.user.id, {
-      include: [role],
-      attributes: { exclude: ["passwordHash"] },
+      include: [role], // Rollen mitladen
+      attributes: { exclude: ["passwordHash"] }, // Passworthash nicht zurückgeben
     });
 
     if (!currentUser) {
       return res.status(404).json({ message: "Benutzer nicht gefunden" });
     }
 
+    // Nutzerinfos inkl. Rollen zurückgeben
     res.json({
       user: {
         ...currentUser.toJSON(),
@@ -89,7 +96,7 @@ export const me = async (req, res) => {
   }
 };
 
-// ✅ Registrierung (nur durch berechtigte Rollen)
+// ✅ Registrierung: Neuer Nutzer anlegen (meist nur durch Admins möglich)
 export const register = async (req, res) => {
   const {
     email,
@@ -105,6 +112,7 @@ export const register = async (req, res) => {
   } = req.body;
 
   try {
+    // Prüfen, ob E-Mail schon vergeben ist
     const existing = await user.findOne({ where: { email } });
     if (existing) {
       return res
@@ -112,8 +120,10 @@ export const register = async (req, res) => {
         .json({ message: "Benutzer mit dieser E-Mail existiert bereits" });
     }
 
+    // Passwort hashen für sichere Speicherung
     const passwordHash = await bcrypt.hash(password, 10);
 
+    // Neuen Nutzer erstellen (ohne Rollen)
     const newUser = await user.create({
       email,
       username,
@@ -126,6 +136,7 @@ export const register = async (req, res) => {
       holiday_days,
     });
 
+    // Falls Rollen angegeben, diese zuweisen
     if (roles.length > 0) {
       const foundRoles = await role.findAll({
         where: { name: roles },
@@ -140,39 +151,43 @@ export const register = async (req, res) => {
   }
 };
 
-// 🚪 Logout (optional, da token clientseitig gelöscht wird)
+// 🚪 Logout: Einfacher Endpoint, da Token clientseitig gelöscht wird
 export const logout = async (req, res) => {
-  // Token wird nicht gespeichert -> Logout passiert clientseitig durch Token-Löschung
+  // Server-seitig keine Aktion notwendig, da JWT stateless
   res.json({ message: "Logout erfolgreich (Client-seitig Token entfernen)" });
 };
 
+// 🔑 Passwort zurücksetzen anfordern: Sendet Reset-Link per E-Mail
 export const requestPasswordReset = async (req, res) => {
   const { email } = req.body;
 
   try {
+    // Nutzer mit gegebener E-Mail suchen (nur nicht gelöschte)
     const existingUser = await user.findOne({
       where: { email, deleted: false },
     });
-    // Auch wenn kein Benutzer existiert, antworte gleich aus Sicherheitsgründen
+
+    // Aus Sicherheitsgründen immer Erfolg zurückgeben, auch wenn kein Nutzer existiert
     if (!existingUser) {
-      return res
-        .status(200)
-        .json({
-          message: "Wenn deine E-Mail registriert ist, erhältst du einen Link.",
-        });
+      return res.status(200).json({
+        message: "Wenn deine E-Mail registriert ist, erhältst du einen Link.",
+      });
     }
 
+    // Zufälligen Token für Zurücksetzen generieren und Ablaufzeit setzen (1 Stunde)
     const resetToken = crypto.randomBytes(32).toString("hex");
-    const expires = new Date(Date.now() + 60 * 60 * 1000); // 1 Stunde gültig
+    const expires = new Date(Date.now() + 60 * 60 * 1000);
 
+    // Token und Ablauf in DB speichern
     await existingUser.update({
       resetToken,
       resetTokenExpires: expires,
     });
 
+    // Link zum Frontend mit Token zusammenbauen
     const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
 
-    // Mail-Transporter (z. B. Gmail oder Mailtrap)
+    // E-Mail-Transporter konfigurieren (z.B. Gmail, SMTP)
     const transporter = nodemailer.createTransport({
       host: process.env.EMAIL_HOST,
       port: Number(process.env.EMAIL_PORT),
@@ -183,6 +198,7 @@ export const requestPasswordReset = async (req, res) => {
       },
     });
 
+    // Reset-Mail mit Link versenden
     await transporter.sendMail({
       from: `"Support" <${process.env.EMAIL_USER}>`,
       to: existingUser.email,
@@ -190,6 +206,7 @@ export const requestPasswordReset = async (req, res) => {
       html: `<p>Hier kannst du dein Passwort zurücksetzen:</p><p><a href="${resetLink}">${resetLink}</a></p>`,
     });
 
+    // Erfolgsmeldung zurückgeben
     res.json({
       message: "Wenn deine E-Mail registriert ist, erhältst du einen Link.",
     });
@@ -199,27 +216,34 @@ export const requestPasswordReset = async (req, res) => {
   }
 };
 
+// 🔑 Passwort zurücksetzen: Token prüfen, neues Passwort setzen
 export const resetPassword = async (req, res) => {
   const { token, newPassword } = req.body;
 
   try {
+    // Nutzer mit gültigem Token und Ablaufzeit in der Zukunft suchen
     const existingUser = await user.findOne({
       where: {
         resetToken: token,
-        resetTokenExpires: { [Op.gt]: new Date() }
-      }
+        resetTokenExpires: { [Op.gt]: new Date() },
+      },
     });
 
+    // Falls Token ungültig oder abgelaufen, Fehler zurückgeben
     if (!existingUser) {
-      return res.status(400).json({ message: "Token ist ungültig oder abgelaufen" });
+      return res
+        .status(400)
+        .json({ message: "Token ist ungültig oder abgelaufen" });
     }
 
+    // Neues Passwort hashen
     const passwordHash = await bcrypt.hash(newPassword, 10);
 
+    // Passwort speichern, Token löschen
     await existingUser.update({
       passwordHash,
       resetToken: null,
-      resetTokenExpires: null
+      resetTokenExpires: null,
     });
 
     res.json({ message: "Passwort erfolgreich zurückgesetzt" });
@@ -228,4 +252,3 @@ export const resetPassword = async (req, res) => {
     res.status(500).json({ message: "Fehler beim Zurücksetzen" });
   }
 };
-
