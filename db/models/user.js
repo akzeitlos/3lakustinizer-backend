@@ -42,6 +42,14 @@ export default (sequelize, DataTypes) => {
     deleted: {
         type: DataTypes.BOOLEAN,
         defaultValue: false
+    },
+    resetToken: {
+      type: DataTypes.STRING,
+      allowNull: true
+    },
+    resetTokenExpires: {
+      type: DataTypes.DATE,
+      allowNull: true
     }
   },{
     timestamps: true,

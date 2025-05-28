@@ -1,7 +1,9 @@
 import db from "../db/index.js";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
-import { Op } from 'sequelize';
+import { Op } from "sequelize";
+import crypto from "crypto";
+import nodemailer from "nodemailer";
 
 const { user, role } = db;
 
@@ -143,3 +145,87 @@ export const logout = async (req, res) => {
   // Token wird nicht gespeichert -> Logout passiert clientseitig durch Token-Löschung
   res.json({ message: "Logout erfolgreich (Client-seitig Token entfernen)" });
 };
+
+export const requestPasswordReset = async (req, res) => {
+  const { email } = req.body;
+
+  try {
+    const existingUser = await user.findOne({
+      where: { email, deleted: false },
+    });
+    // Auch wenn kein Benutzer existiert, antworte gleich aus Sicherheitsgründen
+    if (!existingUser) {
+      return res
+        .status(200)
+        .json({
+          message: "Wenn deine E-Mail registriert ist, erhältst du einen Link.",
+        });
+    }
+
+    const resetToken = crypto.randomBytes(32).toString("hex");
+    const expires = new Date(Date.now() + 60 * 60 * 1000); // 1 Stunde gültig
+
+    await existingUser.update({
+      resetToken,
+      resetTokenExpires: expires,
+    });
+
+    const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
+
+    // Mail-Transporter (z. B. Gmail oder Mailtrap)
+    const transporter = nodemailer.createTransport({
+      host: process.env.EMAIL_HOST,
+      port: Number(process.env.EMAIL_PORT),
+      secure: false,
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASSWORD,
+      },
+    });
+
+    await transporter.sendMail({
+      from: `"Support" <${process.env.EMAIL_USER}>`,
+      to: existingUser.email,
+      subject: "Passwort zurücksetzen",
+      html: `<p>Hier kannst du dein Passwort zurücksetzen:</p><p><a href="${resetLink}">${resetLink}</a></p>`,
+    });
+
+    res.json({
+      message: "Wenn deine E-Mail registriert ist, erhältst du einen Link.",
+    });
+  } catch (err) {
+    console.error("Reset-Passwort Fehler:", err);
+    res.status(500).json({ message: "Fehler beim Versenden der E-Mail" });
+  }
+};
+
+export const resetPassword = async (req, res) => {
+  const { token, newPassword } = req.body;
+
+  try {
+    const existingUser = await user.findOne({
+      where: {
+        resetToken: token,
+        resetTokenExpires: { [Op.gt]: new Date() }
+      }
+    });
+
+    if (!existingUser) {
+      return res.status(400).json({ message: "Token ist ungültig oder abgelaufen" });
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+
+    await existingUser.update({
+      passwordHash,
+      resetToken: null,
+      resetTokenExpires: null
+    });
+
+    res.json({ message: "Passwort erfolgreich zurückgesetzt" });
+  } catch (err) {
+    console.error("Passwort-Reset-Fehler:", err);
+    res.status(500).json({ message: "Fehler beim Zurücksetzen" });
+  }
+};
+
